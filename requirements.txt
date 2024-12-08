@@ -1,0 +1,8 @@
+deep_translator
+googletrans
+langchain_community
+langchain
+PyPDF2
+chromadb
+streamlit
+ollama
