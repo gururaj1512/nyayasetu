@@ -2,6 +2,10 @@ import os
 import time
 import logging
 import streamlit as st
+from gtts import gTTS
+import tempfile
+import pygame  # For playing audio
+import threading  # To handle audio playback in a separate thread
 from PyPDF2 import PdfReader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -13,6 +17,9 @@ from googletrans import Translator
 from deep_translator import GoogleTranslator
 
 from htmlTemplates import css, bot_template, user_template
+
+# Initialize pygame mixer for audio playback
+pygame.mixer.init()
 
 # Constants
 MODEL_NAME = "llama3.2"
@@ -28,15 +35,22 @@ LANGUAGES = {
     'English': 'en',
     'Hindi': 'hi', 
     'Marathi': 'mr', 
-    'kannada': 'kn', 
-    'punjabi': 'pa', 
+    'Kannada': 'kn', 
+    'Punjabi': 'pa', 
     'Tamil': 'ta', 
     'Telugu': 'te', 
     'Arabic': 'ar', 
     'Urdu': 'ur', 
     'Japanese': 'ja', 
-    'spanish': 'es'
+    'Spanish': 'es',
+    'French': 'fr',
+    'German': 'de',
+    'Chinese': 'zh-CN',
+    'Portuguese': 'pt'
 }
+
+# Supported TTS languages
+TTS_SUPPORTED_LANGUAGES = ['en', 'hi', 'es', 'fr', 'de', 'zh-CN', 'pt', 'ja']
 
 # Manually defined FAQ mapping
 FAQ_QUESTIONS = {
@@ -61,6 +75,9 @@ FAQ_QUESTIONS = {
         "Your documents and conversations are processed locally and are not stored or shared externally. "
         "The application uses advanced language models to provide responses."
 }
+
+# Global variable to track audio playback
+is_playing = False
 
 # Initialize translator
 translator = Translator()
@@ -140,6 +157,70 @@ def translate_text(text, target_lang):
         logging.error(f"Translation error: {e}")
         return text
 
+# Text-to-Speech Function with Comprehensive Error Handling
+def speak_text(text, selected_language):
+    """
+    Convert text to speech using gTTS and play audio with improved error handling
+    
+    Args:
+        text (str): Text to be converted to speech
+        selected_language (str): Selected language name
+    """
+    global is_playing
+    
+    # Prevent multiple simultaneous playbacks
+    if is_playing:
+        st.warning("Audio is already playing. Please wait.")
+        return
+    
+    def play_audio_thread():
+        global is_playing
+        is_playing = True
+        
+        try:
+            # Determine language code
+            language_code = LANGUAGES.get(selected_language, 'en')
+            
+            # Fallback to English if language not supported by gTTS
+            if language_code not in TTS_SUPPORTED_LANGUAGES:
+                language_code = 'en'
+                st.warning(f"Language {selected_language} not supported. Falling back to English.")
+            
+            # Use a unique temporary filename with a specific extension
+            temp_dir = tempfile.gettempdir()
+            temp_filename = os.path.join(temp_dir, f"tts_audio_{time.time()}.mp3")
+            
+            # Generate speech
+            tts = gTTS(text=text, lang=language_code)
+            tts.save(temp_filename)
+            
+            # Play the audio
+            pygame.mixer.music.load(temp_filename)
+            pygame.mixer.music.play()
+            
+            # Wait for playback to finish
+            while pygame.mixer.music.get_busy():
+                pygame.time.Clock().tick(10)
+            
+            # Clean up
+            pygame.mixer.music.unload()
+            
+            # Safely remove the temporary file
+            try:
+                os.unlink(temp_filename)
+            except Exception as cleanup_error:
+                logging.warning(f"Could not delete temporary audio file: {cleanup_error}")
+        
+        except Exception as e:
+            st.error(f"Text-to-Speech error: {e}")
+            logging.error(f"TTS Error: {e}")
+        
+        finally:
+            is_playing = False
+    
+    # Start audio playback in a separate thread
+    threading.Thread(target=play_audio_thread, daemon=True).start()
+
 def handle_userinput(user_question, is_faq=False):
     """Process user questions and retrieve answers."""
     if not user_question.strip():
@@ -204,9 +285,8 @@ def main():
             list(LANGUAGES.keys()), 
             index=list(LANGUAGES.keys()).index(st.session_state.selected_language)
         )
-        
-        st.subheader("Documents Loading")
 
+        st.subheader("Documents Loading")
         if st.button("Process Documents"):
             with st.spinner("Processing"):
                 try:
@@ -230,22 +310,27 @@ def main():
                 if st.button(faq_questions[i]):
                     handle_userinput(faq_questions[i], is_faq=True)
 
-    # Display chat history
-    if st.session_state.chat_history:
-        for message in st.session_state.chat_history[-5:]:  # Show last 5 messages
-            st.write(user_template.replace("{{MSG}}", message["user"]), unsafe_allow_html=True)
-            st.write(bot_template.replace("{{MSG}}", message["bot"]), unsafe_allow_html=True)
-
     # Chat input
     user_question = st.chat_input("Ask a question:")
 
     if user_question:
         handle_userinput(user_question)
-        # Display chat history
-        if st.session_state.chat_history:
-            for message in st.session_state.chat_history[-5:]:  # Show last 5 messages
-                st.write(user_template.replace("{{MSG}}", message["user"]), unsafe_allow_html=True)
-                st.write(bot_template.replace("{{MSG}}", message["bot"]), unsafe_allow_html=True)
+
+    # Display chat history
+    if st.session_state.chat_history:
+        for idx, message in enumerate(st.session_state.chat_history[-5:]):  # Show last 5 messages
+            # User message
+            st.write(user_template.replace("{{MSG}}", message["user"]), unsafe_allow_html=True)
+            
+            # Bot message with TTS button
+            bot_msg_div = bot_template.replace("{{MSG}}", message["bot"])
+            st.write(bot_msg_div, unsafe_allow_html=True)
+            
+            # Add TTS button next to bot message
+            tts_button = st.button(f"🔊 Listen", key=f"tts_1_{idx}")
+            if tts_button:
+                # Pass the full language name, not the code
+                speak_text(message["bot"], st.session_state.selected_language)
 
 
 if __name__ == '__main__':

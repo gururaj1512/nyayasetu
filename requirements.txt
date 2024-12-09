@@ -6,3 +6,5 @@ PyPDF2
 chromadb
 streamlit
 ollama
+gtts
+pygame

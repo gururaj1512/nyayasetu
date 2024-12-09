@@ -7,7 +7,7 @@ css = '''
   background-color: #aec6cf;
 }
 .chat-message.bot {
-  background-color: #e9eaec
+  background-color: #e9eaec;
 }
 .chat-message .avatar {
   width: 20%;
